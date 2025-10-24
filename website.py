@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 from google import genai
+import matplotlib.pyplot as plt
+import numpy as np
 
 # -------------------------------
 # 🌐 Page Config
@@ -248,7 +249,11 @@ def doctor_page():
     col1.metric("Number of Patients", df["Username"].nunique() if "Username" in df.columns else 0)
     col2.metric("Total Records", len(df))
     existing_flex = [c for c in flex_cols if c in df.columns]
-    col3.metric("Average Flex Degrees", round(df[existing_flex].mean().mean(),2) if existing_flex else "-")
+    # For average flex degrees, compute average across existing flex cols row-wise then mean
+    if existing_flex:
+        col3.metric("Average Flex Degrees", round(df[existing_flex].mean(axis=1).mean(skipna=True),2))
+    else:
+        col3.metric("Average Flex Degrees", "-")
     col4.metric("Latest Record Date", latest_time.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(latest_time) else "-")
 
     search_user = st.text_input("🔍 Search Username")
@@ -256,15 +261,54 @@ def doctor_page():
         df = df[df["Username"].str.contains(search_user, case=False, na=False)]
     st.dataframe(df, use_container_width=True)
 
-    if all(c in df.columns for c in flex_cols):
-        fig_flex = px.line(df, x="Timestamp", y=flex_cols, title="📈 Flex Trend")
-        st.plotly_chart(fig_flex, use_container_width=True)
+    # Replace plotly charts with matplotlib charts displayed via st.pyplot
+    if all(c in df.columns for c in flex_cols) and "Timestamp" in df.columns:
+        # Prepare dataframe sorted by time
+        df_plot = df.sort_values("Timestamp")
+        plt.figure(figsize=(10, 4))
+        for col in flex_cols:
+            plt.plot(df_plot["Timestamp"], df_plot[col], marker='o', linestyle='-', label=col)
+        plt.xlabel("Timestamp")
+        plt.ylabel("Degrees")
+        plt.title("📈 Flex Trend")
+        plt.legend()
+        plt.tight_layout()
+        st.pyplot(plt.gcf())
+        plt.close()
+
     if all(c in df.columns for c in force_cols):
-        fig_force = px.bar(df, x="Username", y=force_cols, title="💪 Force Measurements", barmode="group")
-        st.plotly_chart(fig_force, use_container_width=True)
+        # Group by Username and take mean (so bars per username grouped by force part)
+        df_force = df.groupby("Username")[force_cols].mean().reset_index()
+        # plot grouped bar chart
+        x = np.arange(len(df_force["Username"]))
+        width = 0.15
+        plt.figure(figsize=(12, 5))
+        for i, col in enumerate(force_cols):
+            plt.bar(x + i*width, df_force[col], width=width, label=col)
+        plt.xticks(x + width*(len(force_cols)-1)/2, df_force["Username"], rotation=45, ha='right')
+        plt.xlabel("Username")
+        plt.ylabel("Force")
+        plt.title("💪 Force Measurements (mean per user)")
+        plt.legend()
+        plt.tight_layout()
+        st.pyplot(plt.gcf())
+        plt.close()
+
     if "Pain" in df.columns and "Fatigue" in df.columns:
-        fig_pain = px.scatter(df, x="Pain", y="Fatigue", color="Username", title="❤️ Pain vs Fatigue")
-        st.plotly_chart(fig_pain, use_container_width=True)
+        # Scatter Pain vs Fatigue colored by Username (different markers / colors automatically)
+        plt.figure(figsize=(8, 5))
+        usernames = df["Username"].unique()
+        markers = ['o','s','^','D','v','P','X','*','<','>']
+        for i, u in enumerate(usernames):
+            du = df[df["Username"] == u]
+            plt.scatter(du["Pain"], du["Fatigue"], label=u, marker=markers[i % len(markers)], s=60, alpha=0.7)
+        plt.xlabel("Pain")
+        plt.ylabel("Fatigue")
+        plt.title("❤️ Pain vs Fatigue")
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.tight_layout()
+        st.pyplot(plt.gcf())
+        plt.close()
 
 # -------------------------------
 # 🧩 Extra Page per role
@@ -318,8 +362,20 @@ def extra_page():
         df_a["P4: Time to Stability (sec)"] = "N/A"
 
         # Map fatigue/pain
-        df_a["Fatigue Avg (1–10)"] = df_a["Fatigue_Scale"]
-        df_a["Pain Avg (0–10)"] = df_a["Pain_Scale"]
+        # handle different possible column names
+        if "Fatigue" in df_a.columns:
+            df_a["Fatigue Avg (1–10)"] = df_a["Fatigue"]
+        elif "Fatigue_Scale" in df_a.columns:
+            df_a["Fatigue Avg (1–10)"] = df_a["Fatigue_Scale"]
+        else:
+            df_a["Fatigue Avg (1–10)"] = "N/A"
+
+        if "Pain" in df_a.columns:
+            df_a["Pain Avg (0–10)"] = df_a["Pain"]
+        elif "Pain_Scale" in df_a.columns:
+            df_a["Pain Avg (0–10)"] = df_a["Pain_Scale"]
+        else:
+            df_a["Pain Avg (0–10)"] = "N/A"
 
         # Final schema columns
         final_cols = [
@@ -359,19 +415,6 @@ def extra_page():
 
                 summary = df_a.to_csv(index=False)
 
-    #             prompt = f"""
-    # You are a Clinical Rehabilitation Analytics System designed for Astronaut Hand-Body Integration training.
-    # Always accept incomplete data. If metrics are 'N/A', infer trends from Grip Force, Pain, and Fatigue.
-    # Never reject input.
-
-    # Input CSV:
-    # {summary}
-
-    # Return:
-    # Section B: Weekly AI Summary & Recommendations
-    # Section C: KPI Thresholds & Triggers
-    # Section D: Free-Text Weekly Notes
-    # """
                 prompt = f"""
 You are a Clinical Rehabilitation Analytics System designed for Astronaut Hand-Body Integration training. 
 Your role is to analyze weekly KPI data and produce structured reports that mimic the formatting, tone, and clinical reasoning 
@@ -452,7 +495,6 @@ INPUT CSV DATA (below this line):
                 )
 
                 st.subheader("🧠 AI KPI Summary Output")
-                # st.write(response.text)
                 st.markdown(response.text, unsafe_allow_html=True)
 
 # -------------------------------
