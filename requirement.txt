@@ -1,9 +1,14 @@
-streamlit
-pandas
-plotly
-gspread
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-google-api-python-client
-google-genai
+# Core data & plotting
+pandas>=2.0
+plotly>=5.0
+
+# Google Sheets access and auth
+gspread>=6.0
+google-auth>=2.0
+
+# Google GenAI SDK (you imported `google.genai`)
+google-genai>=0.1
+
+# Optional / helpful utilities
+python-dotenv>=1.0    # load .env files for credentials (optional)
+requests>=2.28        # HTTP library (usually pulled in automatically)
